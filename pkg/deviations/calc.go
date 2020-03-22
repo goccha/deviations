@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Round 四捨五入
@@ -19,6 +20,7 @@ func New() *Calc {
 	c := &Calc{
 		elements: make([]Element, 0, 10),
 		min:      math.NaN(),
+		mux:      &sync.RWMutex{},
 	}
 	c.ranking = newRanking(c)
 	return c
@@ -36,6 +38,7 @@ type Calc struct {
 	max                   float64
 	min                   float64
 	summed                bool
+	mux                   *sync.RWMutex
 }
 
 // Len 集合に含まれるElementの数を返す
@@ -45,21 +48,27 @@ func (c *Calc) Len() int {
 
 // Sort ソート
 func (c *Calc) Sort(desc bool) *Calc {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	if desc {
 		sort.Slice(c.elements, func(i, j int) bool {
-			return c.elements[i].value < c.elements[j].value
+			return c.elements[i].value > c.elements[j].value
 		})
 	} else {
 		sort.Slice(c.elements, func(i, j int) bool {
-			return c.elements[i].value > c.elements[j].value
+			return c.elements[i].value < c.elements[j].value
 		})
 	}
 	return c
 }
 
 // CustomSort 任意ソート
-func (c *Calc) CustomSort(f func(i, j int) bool) *Calc {
-	sort.Slice(c.elements, f)
+func (c *Calc) CustomSort(f func(e1, e2 Element) bool) *Calc {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	sort.Slice(c.elements, func(i, j int) bool {
+		return f(c.elements[i], c.elements[j])
+	})
 	return c
 }
 
@@ -67,7 +76,7 @@ func (c *Calc) CustomSort(f func(i, j int) bool) *Calc {
 func (c *Calc) Search(value float64) []Element {
 	c.Sort(false)
 	index := sort.Search(len(c.elements), func(i int) bool {
-		return c.elements[i].value <= value
+		return c.elements[i].value >= value
 	})
 	if index < len(c.elements) {
 		key := floatingKey{key: value}
@@ -86,21 +95,24 @@ func (c *Calc) AddInt(v int, a ...interface{}) *Calc {
 
 // add Elementを追加する
 func (c *Calc) add(elm Element) *Calc {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	v := elm.value
 	c.elements = append(c.elements, elm)
 	c.total += v
-	c.ranking.Add(v)
+	c.ranking.add(v)
 	if v > c.max {
 		c.max = v
 	}
-	if c.min == math.NaN() || v < c.min {
+
+	if math.IsNaN(c.min) || v < c.min {
 		c.min = v
 	}
 	c.summed = false
 	return c
 }
 
-// Add 数値を追加する
+// add 数値を追加する
 func (c *Calc) Add(v float64, a ...interface{}) *Calc {
 	var elm Element
 	if a != nil {
@@ -117,6 +129,8 @@ func (c *Calc) Add(v float64, a ...interface{}) *Calc {
 
 // Clone 集合のクローンを生成する
 func (c *Calc) Clone() *Calc {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	elms := make([]Element, len(c.elements), len(c.elements))
 	copy(elms, c.elements)
 	return &Calc{
@@ -125,11 +139,14 @@ func (c *Calc) Clone() *Calc {
 		ranking:  c.ranking.Clone(),
 		max:      c.max,
 		min:      c.min,
+		mux:      &sync.RWMutex{},
 	}
 }
 
 // Union 和集合
 func (c *Calc) Union(s *Calc) *Calc {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	calc := New()
 	for _, elm := range c.elements {
 		calc.add(elm)
@@ -142,6 +159,8 @@ func (c *Calc) Union(s *Calc) *Calc {
 
 // Intersection　積集合
 func (c *Calc) Intersection(s *Calc) *Calc {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	calc := New()
 	for _, elm := range c.elements {
 		key := floatingKey{key: elm.value}
@@ -160,6 +179,8 @@ func (c *Calc) Intersection(s *Calc) *Calc {
 
 // Difference 差集合
 func (c *Calc) Difference(s *Calc) (*Calc, *Calc) {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	s1 := New()
 	for _, elm := range c.elements {
 		key := floatingKey{key: elm.value}
@@ -179,6 +200,8 @@ func (c *Calc) Difference(s *Calc) (*Calc, *Calc) {
 
 // SymmetricDifference 対称差集合
 func (c *Calc) SymmetricDifference(s *Calc) *Calc {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	s1 := New()
 	for _, elm := range c.elements {
 		key := floatingKey{key: elm.value}
@@ -247,6 +270,8 @@ func (c *Calc) StandardDeviation() float64 {
 // Sum 集計処理
 func (c *Calc) Sum() *Calc {
 	if !c.summed {
+		c.mux.RLock()
+		defer c.mux.RUnlock()
 		c.avg = c.total / float64(len(c.elements))
 		for _, elm := range c.elements {
 			c.totalSquaredDeviation += elm.SquaredDeviation(c.avg)
@@ -260,6 +285,8 @@ func (c *Calc) Sum() *Calc {
 
 // Extract 指定したフィルターで選択したElementを保持するCalcを返す
 func (c *Calc) Extract(f func(elm Element) bool) *Calc {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	cal := New()
 	for _, e := range c.elements {
 		if f(e) {
@@ -271,6 +298,8 @@ func (c *Calc) Extract(f func(elm Element) bool) *Calc {
 
 // ForEach 集合に含まれるエレメントループ
 func (c *Calc) ForEach(f func(elm Element) bool, reverse bool) {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	last := len(c.elements) - 1
 	for i, elm := range c.elements {
 		if reverse {
@@ -296,6 +325,8 @@ func (c *Calc) Ranking() *Ranking {
 
 // DeviationValue 指定した値の偏差値を返す
 func (c *Calc) DeviationValue(v float64) float64 {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	c.Sum()
 	elm := Element{
 		value: v,
@@ -369,6 +400,8 @@ func newRanking(c *Calc) *Ranking {
 
 // Clone Rankingのクローンを生成する
 func (r *Ranking) Clone() *Ranking {
+	r.c.mux.RLock()
+	defer r.c.mux.RUnlock()
 	dst := make([]floatingKey, len(r.keys), len(r.keys))
 	copy(dst, r.keys)
 	m := make(map[floatingKey]int)
@@ -382,8 +415,8 @@ func (r *Ranking) Clone() *Ranking {
 	}
 }
 
-// Add ランキングに登録する
-func (r *Ranking) Add(val float64) {
+// add ランキングに登録する
+func (r *Ranking) add(val float64) {
 	key := floatingKey{key: val}
 	if v, ok := r.values[key]; ok {
 		r.values[key] = v + 1
@@ -413,6 +446,8 @@ func (r *Ranking) sort() {
 // Rank 指定の値の現在ランクを返す
 // ランキングに含まれない値の場合、0を返す
 func (r *Ranking) Rank(val float64) int {
+	r.c.mux.RLock()
+	defer r.c.mux.RUnlock()
 	r.sort()
 	key := floatingKey{key: val}
 	if _, ok := r.values[key]; ok {
@@ -432,6 +467,8 @@ func (r *Ranking) Rank(val float64) int {
 // 存在しない順位の場合、NaNを返す
 func (r *Ranking) Value(rank int) float64 {
 	if rank > 0 {
+		r.c.mux.RLock()
+		defer r.c.mux.RUnlock()
 		r.sort()
 		cnt := 1
 		var prev *floatingKey
@@ -456,20 +493,27 @@ func (r *Ranking) Value(rank int) float64 {
 // Elements 指定した順位の値と等しいElementのリストを返す
 func (r *Ranking) Elements(rank int) []Element {
 	val := r.Value(rank)
-	if val != math.NaN() {
+	if !math.IsNaN(val) {
 		return r.c.Search(val)
 	}
 	return []Element{}
 }
 
 // ForEach ランキングリストの順次処理
-func (r *Ranking) ForEach(f func(key float64, cnt, rank int) bool) {
+func (r *Ranking) ForEach(f func(rank int, value float64, elements []Element) bool) {
+	r.c.Sort(true)
+	r.c.mux.RLock()
+	defer r.c.mux.RUnlock()
 	r.sort()
-	rank := 1
+	index, rank := 0, 1
 	for _, k := range r.keys {
-		if !f(k.key, r.values[k], rank) {
+		cnt := r.values[k]
+		last := index + cnt
+		elements := r.c.elements[index:last]
+		if !f(rank, k.key, elements) {
 			break
 		}
-		rank += r.values[k]
+		index += cnt
+		rank += cnt
 	}
 }

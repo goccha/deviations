@@ -111,6 +111,32 @@ func TestCalc_Sort(t *testing.T) {
 	}, false)
 }
 
+func TestCalc_CustomSort(t *testing.T) {
+	y, sa, su := preset()
+	ysasu := y.Union(sa).Union(su)
+	ysasu.CustomSort(func(e1, e2 Element) bool {
+		if e1.value < e2.value {
+			return true
+		} else if e1.value == e2.value {
+			if e1.Attached != nil {
+				if e2.Attached != nil {
+					r1 := e1.Attached.(TestResult)
+					r2 := e2.Attached.(TestResult)
+					return r1.Name < r2.Name
+				}
+				return true
+			} else if e2.Attached != nil {
+				return true
+			}
+			return false
+		}
+		return false
+	}).ForEach(func(elm Element) bool {
+		fmt.Printf("%s\n", elm.String())
+		return true
+	}, false)
+}
+
 func TestCalc_ForEach(t *testing.T) {
 	y, sa, su := preset()
 	ysasu := y.Union(sa).Union(su)
@@ -138,7 +164,18 @@ func TestCalc_Union(t *testing.T) {
 	fmt.Printf("yamada&suzuki.AVG=%f\n", avg)
 	ysasu := ysa.Union(su)
 	avg = ysasu.Avg()
-	fmt.Printf("yamada&suzuki&suzuki.AVG=%f\n", avg)
+	if ysasu.Avg() != 46 {
+		t.Errorf("expected=46, actual=%.0f", ysasu.Avg())
+	}
+	if ysasu.Max() != 100 {
+		t.Errorf("expected=100, actual=%.0f", ysasu.Max())
+	}
+	if ysasu.Min() != 0 {
+		t.Errorf("expected=0, actual=%.0f", ysasu.Min())
+	}
+	if ysasu.Total() != 690 {
+		t.Errorf("expected=690, actual=%.0f", ysasu.Total())
+	}
 }
 
 func TestCalc_Intersection(t *testing.T) {
@@ -191,6 +228,9 @@ func TestCalc_Search(t *testing.T) {
 	y, sa, su := preset()
 	ysasu := y.Union(sa).Union(su)
 	elements := ysasu.Search(30)
+	if len(elements) != 2 {
+		t.Errorf("expected=2, actual=%d", len(elements))
+	}
 	for _, elm := range elements {
 		fmt.Printf("%v\n", elm)
 	}
@@ -216,18 +256,20 @@ func TestCalc_Extract(t *testing.T) {
 func TestRanking_ForEach(t *testing.T) {
 	start := time.Now()
 	c := New()
-	max := 1000000
+	max := 1000
 	for i := 0; i < max; i++ {
-		c.AddInt(rand.Intn(16001))
+		c.AddInt(rand.Intn(101))
 	}
-	fmt.Printf("エレメント数=%d\n", c.Len())
+	if c.Len() != max {
+		t.Errorf("expected=%d, actual=%d", max, c.Len())
+	}
 	fmt.Printf("最大値=%f\n", c.Max())
 	fmt.Printf("最小値=%f\n", c.Min())
 	fmt.Printf("標準偏差=%f\n", c.StandardDeviation())
 	fmt.Printf("平均=%f\n", c.Avg())
 	fmt.Printf("偏差値（8000）=%f\n", c.DeviationValue(8000))
-	c.Ranking().ForEach(func(key float64, cnt, rank int) bool {
-		//fmt.Printf("%f(%d) = %d (%f)\n", key, cnt, rank, c.DeviationValue(key))
+	c.Ranking().ForEach(func(rank int, key float64, elements []Element) bool {
+		fmt.Printf("%d: %.0f %d, (%f)\n", rank, key, len(elements), c.DeviationValue(key))
 		return true
 	})
 	fmt.Printf("ランキング数=%d\n", c.Ranking().Len())
