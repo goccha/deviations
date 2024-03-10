@@ -1,0 +1,37 @@
+name: Run Test
+
+on:
+  push:
+    branches:
+      - '**'
+      - '!main'
+    paths:
+      - '**.go'
+  pull_request:
+    branches:
+      - develop
+      - main
+    types:
+      - opened
+    paths:
+      - '**.go'
+  workflow_dispatch:
+
+jobs:
+  go-test:
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+
+      - name: Set up Go 1.22.1
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.1
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: go test ./...
